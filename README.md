@@ -1,2 +1,3 @@
 # maven-project
-This is for Jenkins cicd
+
+Simple Maven Project
