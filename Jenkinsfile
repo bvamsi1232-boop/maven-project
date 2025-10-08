@@ -13,11 +13,7 @@ pipeline {
     stage('Checkout') {
       steps {
         withCredentials([string(credentialsId: 'github-token', variable: 'GIT_TOKEN')]) {
-          sh '''
-            git clone https://$GIT_TOKEN@github.com/bvamsi1232-boop/maven-project.git
-            cd maven-project
-            git checkout main
-          '''
+          git url: "https://${GIT_TOKEN}@github.com/bvamsi1232-boop/maven-project.git", branch: 'main'
         }
       }
     }
