@@ -1,5 +1,5 @@
 pipeline {
-  agent { label 'maven' }
+  agent { label 'master' }
 
   tools {
     maven 'Maven 3'
@@ -21,6 +21,14 @@ pipeline {
     stage('Build & Unit Test') {
       steps {
         sh 'mvn clean install -DskipTests=false'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      steps {
+        withSonarQubeEnv('SonarQube 25') {
+          sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=maven-project'
+        }
       }
     }
 
