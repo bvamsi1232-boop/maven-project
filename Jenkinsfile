@@ -116,7 +116,7 @@ pipeline {
       echo "Build completed for ${env.PROJECT_NAME}"
     }
     success {
-      echo "✅ Build, S3 upload, and remote container launch succeeded!"
+      echo "✅ Build, Test, SonarQube analysis, S3 upload, and remote container launch, ECR push succeeded!"
     }
     failure {
       echo "❌ Pipeline failed. Check logs for details."
