@@ -9,7 +9,7 @@ pipeline {
     PROJECT_NAME   = 'maven-project'
     AWS_REGION     = 'ap-south-1'
     ECR_REPO       = 'webapp-tomcat9'
-    ECR_REGISTRY   = '086266612868.dkr.ecr.ap-south-1.amazonaws.com/webapp-tomcat9'
+    ECR_REGISTRY   = '086266612868.dkr.ecr.ap-south-1.amazonaws.com'
     IMAGE_TAG      = "${ECR_REGISTRY}/${ECR_REPO}:latest"
     S3_BUCKET      = 'poc-maven-project'
     WAR_PATH       = 'webapp/target/webapp.war'
