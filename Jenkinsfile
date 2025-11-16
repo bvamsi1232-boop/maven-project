@@ -146,31 +146,36 @@ pipeline {
           
           echo "[INFO] Generating EKS authentication token..."
           TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
+          echo "[INFO] Token length: ${#TOKEN}"
 
           echo "[INFO] Creating temporary kubeconfig with embedded token..."
           KUBECONFIG_PATH=$(mktemp)
-          cat > "$KUBECONFIG_PATH" <<EOF
-apiVersion: v1
-clusters:
-- cluster:
-    server: ${ENDPOINT}
-    certificate-authority-data: ${CA_DATA}
-  name: eks_cluster
-contexts:
-- context:
-    cluster: eks_cluster
-    user: eks_user
-  name: eks
-current-context: eks
-kind: Config
-preferences: {}
-users:
-- name: eks_user
-  user:
-    token: ${TOKEN}
-EOF
+          
+          # Write kubeconfig using printf to avoid issues with special characters in token
+          printf '%s\n' \
+            'apiVersion: v1' \
+            'clusters:' \
+            '- cluster:' \
+            "    server: ${ENDPOINT}" \
+            "    certificate-authority-data: ${CA_DATA}" \
+            '  name: eks_cluster' \
+            'contexts:' \
+            '- context:' \
+            '    cluster: eks_cluster' \
+            '    user: eks_user' \
+            '  name: eks' \
+            'current-context: eks' \
+            'kind: Config' \
+            'preferences: {}' \
+            'users:' \
+            '- name: eks_user' \
+            '  user:' \
+            "    token: ${TOKEN}" > "$KUBECONFIG_PATH"
 
-          echo "[INFO] Applying Kubernetes manifests (skipping validation to avoid token expiry)..."
+          echo "[INFO] Kubeconfig created. Testing kubectl access..."
+          kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
+          
+          echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
           kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
 
           echo "[INFO] Waiting for deployment rollout..."
