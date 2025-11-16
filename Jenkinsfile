@@ -170,11 +170,8 @@ users:
     token: ${TOKEN}
 EOF
 
-          echo "[INFO] Applying Kubernetes manifests..."
-          if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}"; then
-            echo "[WARN] kubectl apply failed, retrying with --validate=false"
-            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
-          fi
+          echo "[INFO] Applying Kubernetes manifests (skipping validation to avoid token expiry)..."
+          kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
 
           echo "[INFO] Waiting for deployment rollout..."
           kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
