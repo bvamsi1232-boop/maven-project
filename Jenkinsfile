@@ -125,70 +125,75 @@ pipeline {
       agent { label 'docker' }
 
       steps {
-        sh '''
-          set -e
-          
-          echo "[INFO] Installing kubectl if missing..."
-          if ! command -v kubectl >/dev/null 2>&1; then
-            echo "[INFO] Downloading kubectl..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-            rm -f kubectl
-          fi
+        withCredentials([
+          string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+          string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            set -e
+            
+            echo "[INFO] Installing kubectl if missing..."
+            if ! command -v kubectl >/dev/null 2>&1; then
+              echo "[INFO] Downloading kubectl..."
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl
+              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+              rm -f kubectl
+            fi
 
-          echo "[INFO] Checking AWS credentials access..."
-          aws sts get-caller-identity
+            echo "[INFO] Checking AWS credentials access..."
+            aws sts get-caller-identity
 
-          echo "[INFO] Fetching EKS cluster details..."
-          ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
-          CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
-          
-          echo "[INFO] Generating EKS authentication token..."
-          TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
-          echo "[INFO] Token length: ${#TOKEN}"
+            echo "[INFO] Fetching EKS cluster details..."
+            ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
+            
+            echo "[INFO] Generating EKS authentication token..."
+            TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
+            echo "[INFO] Token length: ${#TOKEN}"
 
-          echo "[INFO] Creating temporary kubeconfig with embedded token..."
-          KUBECONFIG_PATH=$(mktemp)
-          
-          # Build kubeconfig using echo and tee to ensure file is written correctly
-          (
-            echo "apiVersion: v1"
-            echo "clusters:"
-            echo "- cluster:"
-            echo "    server: ${ENDPOINT}"
-            echo "    certificate-authority-data: ${CA_DATA}"
-            echo "  name: eks_cluster"
-            echo "contexts:"
-            echo "- context:"
-            echo "    cluster: eks_cluster"
-            echo "    user: eks_user"
-            echo "  name: eks"
-            echo "current-context: eks"
-            echo "kind: Config"
-            echo "preferences: {}"
-            echo "users:"
-            echo "- name: eks_user"
-            echo "  user:"
-            echo "    token: ${TOKEN}"
-          ) | tee "$KUBECONFIG_PATH" > /dev/null
+            echo "[INFO] Creating temporary kubeconfig with embedded token..."
+            KUBECONFIG_PATH=$(mktemp)
+            
+            # Build kubeconfig using echo and tee to ensure file is written correctly
+            (
+              echo "apiVersion: v1"
+              echo "clusters:"
+              echo "- cluster:"
+              echo "    server: ${ENDPOINT}"
+              echo "    certificate-authority-data: ${CA_DATA}"
+              echo "  name: eks_cluster"
+              echo "contexts:"
+              echo "- context:"
+              echo "    cluster: eks_cluster"
+              echo "    user: eks_user"
+              echo "  name: eks"
+              echo "current-context: eks"
+              echo "kind: Config"
+              echo "preferences: {}"
+              echo "users:"
+              echo "- name: eks_user"
+              echo "  user:"
+              echo "    token: ${TOKEN}"
+            ) | tee "$KUBECONFIG_PATH" > /dev/null
 
-          echo "[INFO] Kubeconfig created. Testing kubectl access..."
-          kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
-          
-          echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
-          kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
+            echo "[INFO] Kubeconfig created. Testing kubectl access..."
+            kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
+            
+            echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
+            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
 
-          echo "[INFO] Waiting for deployment rollout..."
-          kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
-          
-          echo "[INFO] Fetching LoadBalancer IP..."
-          EXTERNAL_IP=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get svc webapp-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
-          echo "[INFO] Web application accessible at: http://${EXTERNAL_IP}"
+            echo "[INFO] Waiting for deployment rollout..."
+            kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
+            
+            echo "[INFO] Fetching LoadBalancer IP..."
+            EXTERNAL_IP=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get svc webapp-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+            echo "[INFO] Web application accessible at: http://${EXTERNAL_IP}"
 
-          echo "[INFO] Cleaning up temporary kubeconfig..."
-          rm -f "$KUBECONFIG_PATH"
-        '''
+            echo "[INFO] Cleaning up temporary kubeconfig..."
+            rm -f "$KUBECONFIG_PATH"
+          '''
+        }
       }
     }
   }
