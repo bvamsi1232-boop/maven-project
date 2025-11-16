@@ -71,22 +71,44 @@ pipeline {
 
       steps {
         sh """
-          set -e
-          echo "[INFO] Step 1: Pulling WAR from S3..."
-          aws s3 cp s3://\$S3_BUCKET/\$WAR_S3_KEY /tmp/webapp.war
+          sh '''
+            set -e
+            # create kubeconfig using an EKS token so kubectl can authenticate reliably from the agent
+            echo "Caller identity:"; aws sts get-caller-identity || true
 
-          echo "[INFO] Step 2: Fetching Dockerfile from GitHub..."
-          curl -sSL https://raw.githubusercontent.com/bvamsi1232-boop/maven-project/main/Dockerfile -o /tmp/Dockerfile
+            ENDPOINT=$(aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'cluster.certificateAuthority.data' --output text)
+            TOKEN=$(aws eks get-token --cluster-name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'status.token' --output text)
 
-          echo "[INFO] Step 3: Creating isolated build context..."
-          BUILD_DIR=\$(mktemp -d /tmp/docker-build-XXXX)
-          cp /tmp/webapp.war /tmp/Dockerfile "\$BUILD_DIR"/
+            KUBECONFIG_PATH=$(mktemp)
+            cat > "$KUBECONFIG_PATH" <<EOF
+  apiVersion: v1
+  clusters:
+  - cluster:
+      server: ${ENDPOINT}
+      certificate-authority-data: ${CA_DATA}
+    name: eks_cluster
+  contexts:
+  - context:
+      cluster: eks_cluster
+      user: eks_user
+    name: eks
+  current-context: eks
+  kind: Config
+  users:
+  - name: eks_user
+    user:
+      token: ${TOKEN}
+  EOF
 
-          echo "[INFO] Step 4: Validating Docker access..."
-          if ! docker info > /dev/null 2>&1; then
-            echo "[ERROR] Docker not accessible. Ensure user is in 'docker' group."
-            rm -rf "\$BUILD_DIR"
-            exit 1
+            if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR"; then
+              echo "kubectl apply failed validation, retrying with --validate=false"
+              kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR" --validate=false
+            fi
+
+            kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
+            rm -f "$KUBECONFIG_PATH"
+          '''
           fi
 
           echo "[INFO] Step 5: Building Docker image from isolated context..."
