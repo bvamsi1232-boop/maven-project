@@ -55,11 +55,13 @@ pipeline {
 
     stage('Upload WAR to S3') {
       steps {
-        sh '''
-          echo "Checking WAR file at ${WAR_PATH}"
-          ls -lh ${WAR_PATH}
-          aws s3 cp ${WAR_PATH} s3://${S3_BUCKET}/${WAR_S3_KEY}
-        '''
+        withAWS(region: '${AWS_REGION}') {
+          sh '''
+            echo "Checking WAR file at ${WAR_PATH}"
+            ls -lh ${WAR_PATH}
+            aws s3 cp ${WAR_PATH} s3://${S3_BUCKET}/${WAR_S3_KEY}
+          '''
+        }
       }
     }
 
@@ -72,52 +74,54 @@ pipeline {
       }
 
       steps {
-        sh '''
-          set -e
-          echo "[INFO] Step 1: Pulling WAR from S3..."
-          aws s3 cp s3://${S3_BUCKET}/${WAR_S3_KEY} /tmp/webapp.war
+        withAWS(region: '${AWS_REGION}') {
+          sh '''
+            set -e
+            echo "[INFO] Step 1: Pulling WAR from S3..."
+            aws s3 cp s3://${S3_BUCKET}/${WAR_S3_KEY} /tmp/webapp.war
 
-          echo "[INFO] Step 2: Fetching Dockerfile from GitHub..."
-          curl -sSL https://raw.githubusercontent.com/bvamsi1232-boop/maven-project/main/Dockerfile -o /tmp/Dockerfile
+            echo "[INFO] Step 2: Fetching Dockerfile from GitHub..."
+            curl -sSL https://raw.githubusercontent.com/bvamsi1232-boop/maven-project/main/Dockerfile -o /tmp/Dockerfile
 
-          echo "[INFO] Step 3: Creating isolated build context..."
-          BUILD_DIR=$(mktemp -d /tmp/docker-build-XXXX)
-          cp /tmp/webapp.war /tmp/Dockerfile "$BUILD_DIR"/
+            echo "[INFO] Step 3: Creating isolated build context..."
+            BUILD_DIR=$(mktemp -d /tmp/docker-build-XXXX)
+            cp /tmp/webapp.war /tmp/Dockerfile "$BUILD_DIR"/
 
-          echo "[INFO] Step 4: Validating Docker access..."
-          if ! docker info > /dev/null 2>&1; then
-            echo "[ERROR] Docker not accessible. Ensure user is in 'docker' group."
+            echo "[INFO] Step 4: Validating Docker access..."
+            if ! docker info > /dev/null 2>&1; then
+              echo "[ERROR] Docker not accessible. Ensure user is in 'docker' group."
+              rm -rf "$BUILD_DIR"
+              exit 1
+            fi
+
+            echo "[INFO] Step 5: Building Docker image from isolated context..."
+            docker build -t ${IMAGE_TAG_REMOTE} "$BUILD_DIR"
+
+            echo "[INFO] Step 6: Cleaning up isolated build context..."
             rm -rf "$BUILD_DIR"
-            exit 1
-          fi
 
-          echo "[INFO] Step 5: Building Docker image from isolated context..."
-          docker build -t ${IMAGE_TAG_REMOTE} "$BUILD_DIR"
+            echo "[INFO] Step 7: Stopping and removing any container using port 8080..."
+            docker ps --format '{{.ID}} {{.Ports}}' | grep '8080->' | awk '{print $1}' | xargs -r docker rm -f
 
-          echo "[INFO] Step 6: Cleaning up isolated build context..."
-          rm -rf "$BUILD_DIR"
+            echo "[INFO] Step 8: Stopping and removing previous container by name (if any)..."
+            docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" | xargs -r docker rm -f
 
-          echo "[INFO] Step 7: Stopping and removing any container using port 8080..."
-          docker ps --format '{{.ID}} {{.Ports}}' | grep '8080->' | awk '{print $1}' | xargs -r docker rm -f
+            echo "[INFO] Step 9: Running new container..."
+            docker run -d --name ${CONTAINER_NAME} -p 8080:8080 ${IMAGE_TAG_REMOTE}
 
-          echo "[INFO] Step 8: Stopping and removing previous container by name (if any)..."
-          docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" | xargs -r docker rm -f
+            echo "[INFO] Step 10: Tagging image for ECR..."
+            docker tag ${IMAGE_TAG_REMOTE} ${IMAGE_TAG}
 
-          echo "[INFO] Step 9: Running new container..."
-          docker run -d --name ${CONTAINER_NAME} -p 8080:8080 ${IMAGE_TAG_REMOTE}
+            echo "[INFO] Step 11: Logging in to ECR..."
+            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-          echo "[INFO] Step 10: Tagging image for ECR..."
-          docker tag ${IMAGE_TAG_REMOTE} ${IMAGE_TAG}
+            echo "[INFO] Step 12: Pushing image to ECR..."
+            docker push ${IMAGE_TAG}
 
-          echo "[INFO] Step 11: Logging in to ECR..."
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-
-          echo "[INFO] Step 12: Pushing image to ECR..."
-          docker push ${IMAGE_TAG}
-
-          echo "[INFO] Step 13: Cleaning up temporary files..."
-          rm -f /tmp/webapp.war /tmp/Dockerfile
-        '''
+            echo "[INFO] Step 13: Cleaning up temporary files..."
+            rm -f /tmp/webapp.war /tmp/Dockerfile
+          '''
+        }
       }
     }
 
@@ -125,10 +129,7 @@ pipeline {
       agent { label 'docker' }
 
       steps {
-        withCredentials([
-          string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-          string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
-        ]) {
+        withAWS(region: '${AWS_REGION}') {
           sh '''
             set -e
             
