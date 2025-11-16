@@ -10,7 +10,7 @@ pipeline {
     AWS_REGION     = 'ap-south-1'
     ECR_REPO       = 'webapp-tomcat9'
     ECR_REGISTRY   = '086266612868.dkr.ecr.ap-south-1.amazonaws.com/webapp-tomcat9'
-    IMAGE_TAG      = "${ECR_REGISTRY}/${ECR_REPO}:${BUILD_NUMBER}"
+    IMAGE_TAG      = "${ECR_REGISTRY}/${ECR_REPO}:latest"
     S3_BUCKET      = 'poc-maven-project'
     WAR_PATH       = 'webapp/target/webapp.war'
     WAR_S3_KEY     = "webapp-${BUILD_NUMBER}.war"
@@ -65,47 +65,55 @@ pipeline {
       agent { label 'docker' }
 
       environment {
-        IMAGE_TAG_REMOTE = "webapp-tomcat9:${BUILD_NUMBER}"
+        IMAGE_TAG_REMOTE = "webapp-tomcat9:latest"
         CONTAINER_NAME   = "webapp-${BUILD_NUMBER}"
       }
 
       steps {
         sh """
+          set -e
           echo "[INFO] Step 1: Pulling WAR from S3..."
           aws s3 cp s3://\$S3_BUCKET/\$WAR_S3_KEY /tmp/webapp.war
 
           echo "[INFO] Step 2: Fetching Dockerfile from GitHub..."
           curl -sSL https://raw.githubusercontent.com/bvamsi1232-boop/maven-project/main/Dockerfile -o /tmp/Dockerfile
 
-          echo "[INFO] Step 3: Validating Docker access..."
+          echo "[INFO] Step 3: Creating isolated build context..."
+          BUILD_DIR=\$(mktemp -d /tmp/docker-build-XXXX)
+          cp /tmp/webapp.war /tmp/Dockerfile "\$BUILD_DIR"/
+
+          echo "[INFO] Step 4: Validating Docker access..."
           if ! docker info > /dev/null 2>&1; then
             echo "[ERROR] Docker not accessible. Ensure user is in 'docker' group."
+            rm -rf "\$BUILD_DIR"
             exit 1
           fi
 
-          echo "[INFO] Step 4: Building Docker image..."
-          cd /tmp
-          docker build -t \$IMAGE_TAG_REMOTE .
+          echo "[INFO] Step 5: Building Docker image from isolated context..."
+          docker build -t \$IMAGE_TAG_REMOTE "\$BUILD_DIR"
 
-          echo "[INFO] Step 5: Stopping and removing any container using port 8080..."
+          echo "[INFO] Step 6: Cleaning up isolated build context..."
+          rm -rf "\$BUILD_DIR"
+
+          echo "[INFO] Step 7: Stopping and removing any container using port 8080..."
           docker ps --format '{{.ID}} {{.Ports}}' | grep '8080->' | awk '{print \$1}' | xargs -r docker rm -f
 
-          echo "[INFO] Step 6: Stopping and removing previous container by name (if any)..."
+          echo "[INFO] Step 8: Stopping and removing previous container by name (if any)..."
           docker ps -a --filter "name=\$CONTAINER_NAME" --format "{{.ID}}" | xargs -r docker rm -f
 
-          echo "[INFO] Step 7: Running new container..."
+          echo "[INFO] Step 9: Running new container..."
           docker run -d --name \$CONTAINER_NAME -p 8080:8080 \$IMAGE_TAG_REMOTE
 
-          echo "[INFO] Step 8: Tagging image for ECR..."
+          echo "[INFO] Step 10: Tagging image for ECR..."
           docker tag \$IMAGE_TAG_REMOTE \$IMAGE_TAG
 
-          echo "[INFO] Step 9: Logging in to ECR..."
+          echo "[INFO] Step 11: Logging in to ECR..."
           aws ecr get-login-password --region \$AWS_REGION | docker login --username AWS --password-stdin \$ECR_REGISTRY
 
-          echo "[INFO] Step 10: Pushing image to ECR..."
+          echo "[INFO] Step 12: Pushing image to ECR..."
           docker push \$IMAGE_TAG
 
-          echo "[INFO] Step 11: Cleaning up temporary files..."
+          echo "[INFO] Step 13: Cleaning up temporary files..."
           rm -f /tmp/webapp.war /tmp/Dockerfile
         """
       }
