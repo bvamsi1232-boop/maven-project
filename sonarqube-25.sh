@@ -139,3 +139,5 @@ sudo systemctl status sonarqube25
 
 # debug the issue by restarting using command ==> systemctl restart sonarqube25.service
   # see live logs ==> tail -f /opt/sonarqube25/logs/web.log  (or other sonarlogs)
+
+# sonar = squ_470a3ae7e85f98b32a4c23ca7c40d38304cefec0
