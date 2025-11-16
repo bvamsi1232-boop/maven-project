@@ -55,7 +55,7 @@ pipeline {
 
     stage('Upload WAR to S3') {
       steps {
-        withAWS(region: '${AWS_REGION}') {
+        withAWS(region: "${AWS_REGION}") {
           sh '''
             echo "Checking WAR file at ${WAR_PATH}"
             ls -lh ${WAR_PATH}
@@ -74,7 +74,7 @@ pipeline {
       }
 
       steps {
-        withAWS(region: '${AWS_REGION}') {
+        withAWS(region: "${AWS_REGION}") {
           sh '''
             set -e
             echo "[INFO] Step 1: Pulling WAR from S3..."
@@ -129,7 +129,7 @@ pipeline {
       agent { label 'docker' }
 
       steps {
-        withAWS(region: '${AWS_REGION}') {
+        withAWS(region: "${AWS_REGION}") {
           sh '''
             set -e
             
