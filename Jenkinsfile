@@ -14,6 +14,8 @@ pipeline {
     S3_BUCKET      = 'poc-maven-project'
     WAR_PATH       = 'webapp/target/webapp.war'
     WAR_S3_KEY     = "webapp-${BUILD_NUMBER}.war"
+    EKS_CLUSTER    = 'devops-poc'
+    K8S_MANIFEST_DIR = 'eks/manifestfiles'
   }
 
   stages {
@@ -53,11 +55,11 @@ pipeline {
 
     stage('Upload WAR to S3') {
       steps {
-        sh """
+        sh '''
           echo "Checking WAR file at ${WAR_PATH}"
           ls -lh ${WAR_PATH}
           aws s3 cp ${WAR_PATH} s3://${S3_BUCKET}/${WAR_S3_KEY}
-        """
+        '''
       }
     }
 
@@ -65,114 +67,123 @@ pipeline {
       agent { label 'docker' }
 
       environment {
-        IMAGE_TAG_REMOTE = "webapp-tomcat9:latest"
+        IMAGE_TAG_REMOTE = 'webapp-tomcat9:latest'
         CONTAINER_NAME   = "webapp-${BUILD_NUMBER}"
       }
 
       steps {
-        sh """
-          sh '''
-            set -e
-            # create kubeconfig using an EKS token so kubectl can authenticate reliably from the agent
-            echo "Caller identity:"; aws sts get-caller-identity || true
+        sh '''
+          set -e
+          echo "[INFO] Step 1: Pulling WAR from S3..."
+          aws s3 cp s3://${S3_BUCKET}/${WAR_S3_KEY} /tmp/webapp.war
 
-            ENDPOINT=$(aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)
-            CA_DATA=$(aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'cluster.certificateAuthority.data' --output text)
-            TOKEN=$(aws eks get-token --cluster-name "$EKS_CLUSTER" --region "$AWS_REGION" --query 'status.token' --output text)
+          echo "[INFO] Step 2: Fetching Dockerfile from GitHub..."
+          curl -sSL https://raw.githubusercontent.com/bvamsi1232-boop/maven-project/main/Dockerfile -o /tmp/Dockerfile
 
-            KUBECONFIG_PATH=$(mktemp)
-            cat > "$KUBECONFIG_PATH" <<EOF
-  apiVersion: v1
-  clusters:
-  - cluster:
-      server: ${ENDPOINT}
-      certificate-authority-data: ${CA_DATA}
-    name: eks_cluster
-  contexts:
-  - context:
-      cluster: eks_cluster
-      user: eks_user
-    name: eks
-  current-context: eks
-  kind: Config
-  users:
-  - name: eks_user
-    user:
-      token: ${TOKEN}
-  EOF
+          echo "[INFO] Step 3: Creating isolated build context..."
+          BUILD_DIR=$(mktemp -d /tmp/docker-build-XXXX)
+          cp /tmp/webapp.war /tmp/Dockerfile "$BUILD_DIR"/
 
-            if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR"; then
-              echo "kubectl apply failed validation, retrying with --validate=false"
-              kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR" --validate=false
-            fi
-
-            kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
-            rm -f "$KUBECONFIG_PATH"
-          '''
+          echo "[INFO] Step 4: Validating Docker access..."
+          if ! docker info > /dev/null 2>&1; then
+            echo "[ERROR] Docker not accessible. Ensure user is in 'docker' group."
+            rm -rf "$BUILD_DIR"
+            exit 1
           fi
 
           echo "[INFO] Step 5: Building Docker image from isolated context..."
-          docker build -t \$IMAGE_TAG_REMOTE "\$BUILD_DIR"
+          docker build -t ${IMAGE_TAG_REMOTE} "$BUILD_DIR"
 
           echo "[INFO] Step 6: Cleaning up isolated build context..."
-          rm -rf "\$BUILD_DIR"
+          rm -rf "$BUILD_DIR"
 
           echo "[INFO] Step 7: Stopping and removing any container using port 8080..."
-          docker ps --format '{{.ID}} {{.Ports}}' | grep '8080->' | awk '{print \$1}' | xargs -r docker rm -f
+          docker ps --format '{{.ID}} {{.Ports}}' | grep '8080->' | awk '{print $1}' | xargs -r docker rm -f
 
           echo "[INFO] Step 8: Stopping and removing previous container by name (if any)..."
-          docker ps -a --filter "name=\$CONTAINER_NAME" --format "{{.ID}}" | xargs -r docker rm -f
+          docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" | xargs -r docker rm -f
 
           echo "[INFO] Step 9: Running new container..."
-          docker run -d --name \$CONTAINER_NAME -p 8080:8080 \$IMAGE_TAG_REMOTE
+          docker run -d --name ${CONTAINER_NAME} -p 8080:8080 ${IMAGE_TAG_REMOTE}
 
           echo "[INFO] Step 10: Tagging image for ECR..."
-          docker tag \$IMAGE_TAG_REMOTE \$IMAGE_TAG
+          docker tag ${IMAGE_TAG_REMOTE} ${IMAGE_TAG}
 
           echo "[INFO] Step 11: Logging in to ECR..."
-          aws ecr get-login-password --region \$AWS_REGION | docker login --username AWS --password-stdin \$ECR_REGISTRY
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
           echo "[INFO] Step 12: Pushing image to ECR..."
-          docker push \$IMAGE_TAG
+          docker push ${IMAGE_TAG}
 
           echo "[INFO] Step 13: Cleaning up temporary files..."
           rm -f /tmp/webapp.war /tmp/Dockerfile
-        """
+        '''
       }
     }
 
     stage('Deploy to EKS') {
       agent { label 'docker' }
-      environment {
-        EKS_CLUSTER = 'devops-poc'
-        K8S_MANIFEST_DIR = 'eks/manifestfiles'
-      }
+
       steps {
         sh '''
           set -e
-          # install kubectl if missing
+          
+          echo "[INFO] Installing kubectl if missing..."
           if ! command -v kubectl >/dev/null 2>&1; then
+            echo "[INFO] Downloading kubectl..."
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+            rm -f kubectl
           fi
 
-          # create a temporary kubeconfig so credentials are written to a path the agent can access
+          echo "[INFO] Fetching EKS cluster endpoint and CA..."
+          ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
+          CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
+          
+          echo "[INFO] Generating EKS authentication token..."
+          TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
+
+          echo "[INFO] Creating temporary kubeconfig with embedded token..."
           KUBECONFIG_PATH=$(mktemp)
-          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION" --kubeconfig "$KUBECONFIG_PATH"
+          cat > "$KUBECONFIG_PATH" <<EOF
+apiVersion: v1
+clusters:
+- cluster:
+    server: ${ENDPOINT}
+    certificate-authority-data: ${CA_DATA}
+  name: eks_cluster
+contexts:
+- context:
+    cluster: eks_cluster
+    user: eks_user
+  name: eks
+current-context: eks
+kind: Config
+preferences: {}
+users:
+- name: eks_user
+  user:
+    token: ${TOKEN}
+EOF
 
-          # apply manifests using the generated kubeconfig; if validation fails due to openapi, retry without validation
-          if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR"; then
-            echo "kubectl apply failed validation, retrying with --validate=false"
-            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR" --validate=false
+          echo "[INFO] Applying Kubernetes manifests..."
+          if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}"; then
+            echo "[WARN] kubectl apply failed validation, retrying with --validate=false"
+            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
           fi
 
-          # wait for deployment rollout (optional) and cleanup
+          echo "[INFO] Waiting for deployment rollout..."
           kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
+          
+          echo "[INFO] Fetching LoadBalancer IP..."
+          EXTERNAL_IP=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get svc webapp-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+          echo "[INFO] Web application accessible at: http://${EXTERNAL_IP}"
+
+          echo "[INFO] Cleaning up temporary kubeconfig..."
           rm -f "$KUBECONFIG_PATH"
         '''
       }
     }
-
   }
 
   post {
@@ -180,10 +191,10 @@ pipeline {
       echo "Build completed for ${env.PROJECT_NAME}"
     }
     success {
-      echo "Build, Test, SonarQube analysis, S3 upload, remote container launch and ECR push succeeded!"
+      echo "Pipeline succeeded: Build, Test, SonarQube, S3 upload, Docker push to ECR, and EKS deployment completed!"
     }
     failure {
-      echo "Pipeline failed. Check logs for details."
+      echo "Pipeline failed. Check logs above for details."
     }
   }
 }
