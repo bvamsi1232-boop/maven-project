@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-tomcat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: 086266612868.dkr.ecr.ap-south-1.amazonaws.com/webapp-tomcat9:latest
+        ports:
+        - containerPort: 8080

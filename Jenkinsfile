@@ -120,6 +120,30 @@ pipeline {
     }
   }
 
+    stage('Deploy to EKS') {
+      agent { label 'docker' }
+      environment {
+        EKS_CLUSTER = 'devops-poc'
+        K8S_MANIFEST_DIR = 'eks/manifestfiles'
+      }
+      steps {
+        sh '''
+          set -e
+          # install kubectl if missing
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          fi
+
+          # configure kubeconfig for the EKS cluster (uses EC2 instance role / environment creds)
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+
+          # apply manifests from repository workspace
+          kubectl apply -f "$K8S_MANIFEST_DIR"
+        '''
+      }
+    }
+
   post {
     always {
       echo "Build completed for ${env.PROJECT_NAME}"
