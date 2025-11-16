@@ -136,39 +136,13 @@ pipeline {
             rm -f kubectl
           fi
 
-          echo "[INFO] Fetching EKS cluster endpoint and CA..."
-          ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
-          CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
-          
-          echo "[INFO] Generating EKS authentication token..."
-          TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
-
-          echo "[INFO] Creating temporary kubeconfig with embedded token..."
+          echo "[INFO] Updating kubeconfig using AWS IAM authenticator..."
           KUBECONFIG_PATH=$(mktemp)
-          cat > "$KUBECONFIG_PATH" <<EOF
-apiVersion: v1
-clusters:
-- cluster:
-    server: ${ENDPOINT}
-    certificate-authority-data: ${CA_DATA}
-  name: eks_cluster
-contexts:
-- context:
-    cluster: eks_cluster
-    user: eks_user
-  name: eks
-current-context: eks
-kind: Config
-preferences: {}
-users:
-- name: eks_user
-  user:
-    token: ${TOKEN}
-EOF
+          aws eks update-kubeconfig --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --kubeconfig "$KUBECONFIG_PATH"
 
           echo "[INFO] Applying Kubernetes manifests..."
           if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}"; then
-            echo "[WARN] kubectl apply failed validation, retrying with --validate=false"
+            echo "[WARN] kubectl apply failed, retrying with --validate=false"
             kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
           fi
 
