@@ -182,6 +182,30 @@ pipeline {
             kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
             
             echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
+
+            # Apply the monitoring namespace first and wait for it to become Active to avoid "namespace not found" races
+            if [ -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" ]; then
+              echo "[INFO] Creating monitoring namespace first..."
+              kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" --validate=false || true
+
+              # wait until namespace becomes Active (timeout ~60s)
+              NAMESPACE_STATUS=""
+              for i in $(seq 1 12); do
+                NAMESPACE_STATUS=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get ns monitoring -o jsonpath='{.status.phase}' 2>/dev/null || true)
+                if [ "${NAMESPACE_STATUS}" = "Active" ]; then
+                  echo "[INFO] namespace 'monitoring' is Active"
+                  break
+                fi
+                echo "[INFO] waiting for namespace to become Active... ($i/12)"
+                sleep 5
+              done
+              if [ "${NAMESPACE_STATUS}" != "Active" ]; then
+                echo "[ERROR] namespace 'monitoring' did not become Active in time"
+                exit 1
+              fi
+            fi
+
+            # Now apply the rest of the manifests (namespace already present)
             kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
 
             echo "[INFO] Waiting for deployment rollout..."
