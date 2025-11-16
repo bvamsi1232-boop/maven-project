@@ -151,26 +151,31 @@ pipeline {
           echo "[INFO] Creating temporary kubeconfig with embedded token..."
           KUBECONFIG_PATH=$(mktemp)
           
-          # Write kubeconfig using printf to avoid issues with special characters in token
-          printf '%s\n' \
-            'apiVersion: v1' \
-            'clusters:' \
-            '- cluster:' \
-            "    server: ${ENDPOINT}" \
-            "    certificate-authority-data: ${CA_DATA}" \
-            '  name: eks_cluster' \
-            'contexts:' \
-            '- context:' \
-            '    cluster: eks_cluster' \
-            '    user: eks_user' \
-            '  name: eks' \
-            'current-context: eks' \
-            'kind: Config' \
-            'preferences: {}' \
-            'users:' \
-            '- name: eks_user' \
-            '  user:' \
-            "    token: ${TOKEN}" > "$KUBECONFIG_PATH"
+          cat > "$KUBECONFIG_PATH" <<'KUBECONFIG_EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    server: ENDPOINT_PLACEHOLDER
+    certificate-authority-data: CA_DATA_PLACEHOLDER
+  name: eks_cluster
+contexts:
+- context:
+    cluster: eks_cluster
+    user: eks_user
+  name: eks
+current-context: eks
+kind: Config
+preferences: {}
+users:
+- name: eks_user
+  user:
+    token: TOKEN_PLACEHOLDER
+KUBECONFIG_EOF
+
+          # Replace placeholders with actual values
+          sed -i "s|ENDPOINT_PLACEHOLDER|${ENDPOINT}|g" "$KUBECONFIG_PATH"
+          sed -i "s|CA_DATA_PLACEHOLDER|${CA_DATA}|g" "$KUBECONFIG_PATH"
+          sed -i "s|TOKEN_PLACEHOLDER|${TOKEN}|g" "$KUBECONFIG_PATH"
 
           echo "[INFO] Kubeconfig created. Testing kubectl access..."
           kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
