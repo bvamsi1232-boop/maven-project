@@ -118,7 +118,6 @@ pipeline {
         """
       }
     }
-  }
 
     stage('Deploy to EKS') {
       agent { label 'docker' }
