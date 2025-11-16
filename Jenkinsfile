@@ -109,8 +109,8 @@ pipeline {
   //         rm -f /tmp/webapp.war /tmp/Dockerfile
   //       """
   //     }
-  //   }
-  // }
+    }
+  }
   post {
     always {
       echo "Build completed for ${env.PROJECT_NAME}"
