@@ -143,6 +143,8 @@ pipeline {
       }
     }
 
+  }
+
   post {
     always {
       echo "Build completed for ${env.PROJECT_NAME}"
