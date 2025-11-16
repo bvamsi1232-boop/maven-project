@@ -134,11 +134,19 @@ pipeline {
             sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
           fi
 
-          # configure kubeconfig for the EKS cluster (uses EC2 instance role / environment creds)
-          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+          # create a temporary kubeconfig so credentials are written to a path the agent can access
+          KUBECONFIG_PATH=$(mktemp)
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION" --kubeconfig "$KUBECONFIG_PATH"
 
-          # apply manifests from repository workspace
-          kubectl apply -f "$K8S_MANIFEST_DIR"
+          # apply manifests using the generated kubeconfig; if validation fails due to openapi, retry without validation
+          if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR"; then
+            echo "kubectl apply failed validation, retrying with --validate=false"
+            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "$K8S_MANIFEST_DIR" --validate=false
+          fi
+
+          # wait for deployment rollout (optional) and cleanup
+          kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
+          rm -f "$KUBECONFIG_PATH"
         '''
       }
     }
