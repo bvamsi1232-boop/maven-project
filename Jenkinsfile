@@ -136,6 +136,14 @@ pipeline {
             rm -f kubectl
           fi
 
+          echo "[INFO] Installing aws-iam-authenticator if missing..."
+          if ! command -v aws-iam-authenticator >/dev/null 2>&1; then
+            echo "[INFO] Downloading aws-iam-authenticator..."
+            curl -sL https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.14/aws-iam-authenticator_0.6.14_linux_amd64 -o /tmp/aws-iam-authenticator
+            sudo install -o root -g root -m 0755 /tmp/aws-iam-authenticator /usr/local/bin/aws-iam-authenticator
+            rm -f /tmp/aws-iam-authenticator
+          fi
+
           echo "[INFO] Updating kubeconfig using AWS IAM authenticator..."
           KUBECONFIG_PATH=$(mktemp)
           aws eks update-kubeconfig --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --kubeconfig "$KUBECONFIG_PATH"
