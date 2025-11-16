@@ -137,21 +137,38 @@ pipeline {
             rm -f kubectl
           fi
 
-          echo "[INFO] Installing aws-iam-authenticator if missing..."
-          if ! command -v aws-iam-authenticator >/dev/null 2>&1; then
-            echo "[INFO] Downloading aws-iam-authenticator..."
-            mkdir -p ~/.local/bin
-            curl -sL https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.14/aws-iam-authenticator_0.6.14_linux_amd64 -o ~/.local/bin/aws-iam-authenticator
-            chmod +x ~/.local/bin/aws-iam-authenticator
-            export PATH="$HOME/.local/bin:$PATH"
-          fi
+          echo "[INFO] Checking AWS credentials access..."
+          aws sts get-caller-identity
 
-          # Ensure PATH includes local bin for aws-iam-authenticator
-          export PATH="$HOME/.local/bin:$PATH"
+          echo "[INFO] Fetching EKS cluster details..."
+          ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
+          CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
+          
+          echo "[INFO] Generating EKS authentication token..."
+          TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
 
-          echo "[INFO] Updating kubeconfig using AWS IAM authenticator..."
+          echo "[INFO] Creating temporary kubeconfig with embedded token..."
           KUBECONFIG_PATH=$(mktemp)
-          aws eks update-kubeconfig --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --kubeconfig "$KUBECONFIG_PATH"
+          cat > "$KUBECONFIG_PATH" <<EOF
+apiVersion: v1
+clusters:
+- cluster:
+    server: ${ENDPOINT}
+    certificate-authority-data: ${CA_DATA}
+  name: eks_cluster
+contexts:
+- context:
+    cluster: eks_cluster
+    user: eks_user
+  name: eks
+current-context: eks
+kind: Config
+preferences: {}
+users:
+- name: eks_user
+  user:
+    token: ${TOKEN}
+EOF
 
           echo "[INFO] Applying Kubernetes manifests..."
           if ! kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}"; then
