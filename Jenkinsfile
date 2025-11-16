@@ -151,31 +151,27 @@ pipeline {
           echo "[INFO] Creating temporary kubeconfig with embedded token..."
           KUBECONFIG_PATH=$(mktemp)
           
-          cat > "$KUBECONFIG_PATH" <<'KUBECONFIG_EOF'
-apiVersion: v1
-clusters:
-- cluster:
-    server: ENDPOINT_PLACEHOLDER
-    certificate-authority-data: CA_DATA_PLACEHOLDER
-  name: eks_cluster
-contexts:
-- context:
-    cluster: eks_cluster
-    user: eks_user
-  name: eks
-current-context: eks
-kind: Config
-preferences: {}
-users:
-- name: eks_user
-  user:
-    token: TOKEN_PLACEHOLDER
-KUBECONFIG_EOF
-
-          # Replace placeholders with actual values
-          sed -i "s|ENDPOINT_PLACEHOLDER|${ENDPOINT}|g" "$KUBECONFIG_PATH"
-          sed -i "s|CA_DATA_PLACEHOLDER|${CA_DATA}|g" "$KUBECONFIG_PATH"
-          sed -i "s|TOKEN_PLACEHOLDER|${TOKEN}|g" "$KUBECONFIG_PATH"
+          # Build kubeconfig using echo and tee to ensure file is written correctly
+          (
+            echo "apiVersion: v1"
+            echo "clusters:"
+            echo "- cluster:"
+            echo "    server: ${ENDPOINT}"
+            echo "    certificate-authority-data: ${CA_DATA}"
+            echo "  name: eks_cluster"
+            echo "contexts:"
+            echo "- context:"
+            echo "    cluster: eks_cluster"
+            echo "    user: eks_user"
+            echo "  name: eks"
+            echo "current-context: eks"
+            echo "kind: Config"
+            echo "preferences: {}"
+            echo "users:"
+            echo "- name: eks_user"
+            echo "  user:"
+            echo "    token: ${TOKEN}"
+          ) | tee "$KUBECONFIG_PATH" > /dev/null
 
           echo "[INFO] Kubeconfig created. Testing kubectl access..."
           kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
