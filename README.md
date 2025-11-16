@@ -36,6 +36,81 @@ maven-project/
 - EKS cluster named `devops-poc` in `ap-south-1` region
 - ECR repository named `webapp-tomcat9` in account `086266612868`
 
+## Step-by-step Setup (Jenkins + AWS + EKS)
+
+Follow these steps on the Jenkins EC2 instance (or a host with AWS CLI access) to reproduce the CI/CD environment used by this repository.
+
+1. Attach an IAM role to the Jenkins EC2 instance
+
+```bash
+# Create a role in the AWS Console or via CLI and attach policies listed in the "IAM permissions" section.
+# Example: assume the role name is EC2_Role and it is attached to the instance running Jenkins.
+```
+
+2. Install Jenkins and required plugins
+
+```bash
+# On Ubuntu (example)
+sudo apt update && sudo apt install -y openjdk-11-jre
+wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | sudo apt-key add -
+sudo sh -c 'echo deb https://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+sudo apt update && sudo apt install -y jenkins
+
+# Then in Jenkins UI: Manage Jenkins -> Manage Plugins -> Install:
+# - Pipeline
+# - Pipeline: AWS Steps (pipeline-aws)
+# - Git
+# - SonarQube Scanner (optional)
+```
+
+3. Configure Jenkins to allow agents to use instance credentials
+
+```
+# In Jenkins UI -> Manage Jenkins -> Configure System
+# Under "Pipeline: AWS Steps" enable "Retrieve credentials from node" if you run agents/steps on nodes
+# that should obtain credentials from the instance metadata (EC2 instance role).
+```
+
+4. Create a Pipeline job using this repository
+
+```
+# Create a new Pipeline job and point it to this Git repository. The job uses the `Jenkinsfile` at repo root.
+# Optionally add GitHub webhook to trigger builds on push to main.
+```
+
+5. Map the Jenkins EC2 role into EKS RBAC (so kubectl calls from Jenkins are authorized)
+
+Use `eksctl` (recommended) or edit the `aws-auth` configmap manually. Replace account/role names below.
+
+```bash
+ACCOUNT=086266612868
+ROLE_NAME=EC2_Role
+CLUSTER=devops-poc
+
+eksctl create iamidentitymapping \
+  --cluster "${CLUSTER}" \
+  --arn "arn:aws:iam::${ACCOUNT}:role/${ROLE_NAME}" \
+  --group system:masters \
+  --username jenkins-ec2
+```
+
+6. Verify Jenkins can call EKS
+
+Run this on the Jenkins EC2 instance (or in the pipeline Docker agent if metadata is available):
+
+```bash
+aws sts get-caller-identity
+aws eks describe-cluster --name devops-poc --region ap-south-1 --query 'cluster.endpoint'
+aws eks get-token --cluster-name devops-poc --region ap-south-1 --query status.token --output text
+# Build a temporary kubeconfig as used by the pipeline and run kubectl get nodes
+```
+
+7. Trigger a build in Jenkins
+
+```
+# Push code to main or click Build Now in Jenkins UI. Monitor Console Output.
+```
+
 ## Build & Test Locally
 
 ```bash
