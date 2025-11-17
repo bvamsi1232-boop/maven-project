@@ -125,113 +125,113 @@ pipeline {
       }
     }
 
-  //   stage('Deploy to EKS') {
-  //     agent { label 'docker' }
+    stage('Deploy to EKS') {
+      agent { label 'docker' }
 
-  //     steps {
-  //       withAWS(region: "${AWS_REGION}") {
-  //         sh '''
-  //           set -e
+      steps {
+        withAWS(region: "${AWS_REGION}") {
+          sh '''
+            set -e
             
-  //           echo "[INFO] Installing kubectl if missing..."
-  //           if ! command -v kubectl >/dev/null 2>&1; then
-  //             echo "[INFO] Downloading kubectl..."
-  //             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-  //             chmod +x kubectl
-  //             sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-  //             rm -f kubectl
-  //           fi
+            echo "[INFO] Installing kubectl if missing..."
+            if ! command -v kubectl >/dev/null 2>&1; then
+              echo "[INFO] Downloading kubectl..."
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl
+              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+              rm -f kubectl
+            fi
 
-  //           echo "[INFO] Checking AWS credentials access..."
-  //           aws sts get-caller-identity
+            echo "[INFO] Checking AWS credentials access..."
+            aws sts get-caller-identity
 
-  //           echo "[INFO] Fetching EKS cluster details..."
-  //           ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
-  //           CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
+            echo "[INFO] Fetching EKS cluster details..."
+            ENDPOINT=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'cluster.certificateAuthority.data' --output text)
             
-  //           echo "[INFO] Generating EKS authentication token..."
-  //           TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
-  //           echo "[INFO] Token length: ${#TOKEN}"
+            echo "[INFO] Generating EKS authentication token..."
+            TOKEN=$(aws eks get-token --cluster-name "${EKS_CLUSTER}" --region "${AWS_REGION}" --query 'status.token' --output text)
+            echo "[INFO] Token length: ${#TOKEN}"
 
-  //           echo "[INFO] Creating temporary kubeconfig with embedded token..."
-  //           KUBECONFIG_PATH=$(mktemp)
+            echo "[INFO] Creating temporary kubeconfig with embedded token..."
+            KUBECONFIG_PATH=$(mktemp)
             
-  //           # Build kubeconfig using echo and tee to ensure file is written correctly
-  //           (
-  //             echo "apiVersion: v1"
-  //             echo "clusters:"
-  //             echo "- cluster:"
-  //             echo "    server: ${ENDPOINT}"
-  //             echo "    certificate-authority-data: ${CA_DATA}"
-  //             echo "  name: eks_cluster"
-  //             echo "contexts:"
-  //             echo "- context:"
-  //             echo "    cluster: eks_cluster"
-  //             echo "    user: eks_user"
-  //             echo "  name: eks"
-  //             echo "current-context: eks"
-  //             echo "kind: Config"
-  //             echo "preferences: {}"
-  //             echo "users:"
-  //             echo "- name: eks_user"
-  //             echo "  user:"
-  //             echo "    token: ${TOKEN}"
-  //           ) | tee "$KUBECONFIG_PATH" > /dev/null
+            # Build kubeconfig using echo and tee to ensure file is written correctly
+            (
+              echo "apiVersion: v1"
+              echo "clusters:"
+              echo "- cluster:"
+              echo "    server: ${ENDPOINT}"
+              echo "    certificate-authority-data: ${CA_DATA}"
+              echo "  name: eks_cluster"
+              echo "contexts:"
+              echo "- context:"
+              echo "    cluster: eks_cluster"
+              echo "    user: eks_user"
+              echo "  name: eks"
+              echo "current-context: eks"
+              echo "kind: Config"
+              echo "preferences: {}"
+              echo "users:"
+              echo "- name: eks_user"
+              echo "  user:"
+              echo "    token: ${TOKEN}"
+            ) | tee "$KUBECONFIG_PATH" > /dev/null
 
-  //           echo "[INFO] Kubeconfig created. Testing kubectl access..."
-  //           kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
+            echo "[INFO] Kubeconfig created. Testing kubectl access..."
+            kubectl --kubeconfig="$KUBECONFIG_PATH" get nodes
             
-  //           echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
+            echo "[INFO] Applying Kubernetes manifests (skipping validation)..."
 
-  //           # Apply the monitoring namespace first and wait for it to become Active to avoid "namespace not found" races
-  //           if [ -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" ]; then
-  //             echo "[INFO] Creating monitoring namespace first..."
-  //             kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" --validate=false || true
+            # Apply the monitoring namespace first and wait for it to become Active to avoid "namespace not found" races
+            if [ -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" ]; then
+              echo "[INFO] Creating monitoring namespace first..."
+              kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}/monitoring-namespace.yaml" --validate=false || true
 
-  //             # wait until namespace becomes Active (timeout ~60s)
-  //             NAMESPACE_STATUS=""
-  //             for i in $(seq 1 12); do
-  //               NAMESPACE_STATUS=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get ns monitoring -o jsonpath='{.status.phase}' 2>/dev/null || true)
-  //               if [ "${NAMESPACE_STATUS}" = "Active" ]; then
-  //                 echo "[INFO] namespace 'monitoring' is Active"
-  //                 break
-  //               fi
-  //               echo "[INFO] waiting for namespace to become Active... ($i/12)"
-  //               sleep 5
-  //             done
-  //             if [ "${NAMESPACE_STATUS}" != "Active" ]; then
-  //               echo "[ERROR] namespace 'monitoring' did not become Active in time"
-  //               exit 1
-  //             fi
-  //           fi
+              # wait until namespace becomes Active (timeout ~60s)
+              NAMESPACE_STATUS=""
+              for i in $(seq 1 12); do
+                NAMESPACE_STATUS=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get ns monitoring -o jsonpath='{.status.phase}' 2>/dev/null || true)
+                if [ "${NAMESPACE_STATUS}" = "Active" ]; then
+                  echo "[INFO] namespace 'monitoring' is Active"
+                  break
+                fi
+                echo "[INFO] waiting for namespace to become Active... ($i/12)"
+                sleep 5
+              done
+              if [ "${NAMESPACE_STATUS}" != "Active" ]; then
+                echo "[ERROR] namespace 'monitoring' did not become Active in time"
+                exit 1
+              fi
+            fi
 
-  //           # Now apply the rest of the manifests (namespace already present)
-  //           kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
+            # Now apply the rest of the manifests (namespace already present)
+            kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f "${K8S_MANIFEST_DIR}" --validate=false
 
-  //           echo "[INFO] Waiting for deployment rollout..."
-  //           kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
+            echo "[INFO] Waiting for deployment rollout..."
+            kubectl --kubeconfig="$KUBECONFIG_PATH" rollout status deployment/webapp-tomcat --timeout=5m || true
             
-  //           echo "[INFO] Fetching LoadBalancer IP..."
-  //           EXTERNAL_IP=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get svc webapp-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
-  //           echo "[INFO] Web application accessible at: http://${EXTERNAL_IP}"
+            echo "[INFO] Fetching LoadBalancer IP..."
+            EXTERNAL_IP=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get svc webapp-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+            echo "[INFO] Web application accessible at: http://${EXTERNAL_IP}"
 
-  //           echo "[INFO] Cleaning up temporary kubeconfig..."
-  //           rm -f "$KUBECONFIG_PATH"
-  //         '''
-  //       }
-  //     }
-  //   }
-  // }
+            echo "[INFO] Cleaning up temporary kubeconfig..."
+            rm -f "$KUBECONFIG_PATH"
+          '''
+        }
+      }
+    }
+  }
 
-  // post {
-  //   always {
-  //     echo "Build completed for ${env.PROJECT_NAME}"
-  //   }
-  //   success {
-  //     echo "Pipeline succeeded: Build, Test, SonarQube, S3 upload, Docker push to ECR, and EKS deployment completed!"
-  //   }
-  //   failure {
-  //     echo "Pipeline failed. Check logs above for details."
-  //   }
+  post {
+    always {
+      echo "Build completed for ${env.PROJECT_NAME}"
+    }
+    success {
+      echo "Pipeline succeeded: Build, Test, SonarQube, S3 upload, Docker push to ECR, and EKS deployment completed!"
+    }
+    failure {
+      echo "Pipeline failed. Check logs above for details."
+    }
   }
 }
